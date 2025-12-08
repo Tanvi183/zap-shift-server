@@ -2,11 +2,11 @@ const express = require("express");
 const cors = require("cors");
 const app = express();
 require("dotenv").config();
-const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-
 // stripe connection
 const stripe = require("stripe")(process.env.STRIPE_SECRET);
+
+const port = process.env.PORT || 3000;
 
 // Middleware
 app.use(express.json());
@@ -80,26 +80,50 @@ async function run() {
         line_items: [
           {
             price_data: {
-              currency: "USD",
+              currency: "usd",
               unit_amount: amount,
               product_data: {
-                name: paymentInfo.parcelName,
+                name: `Please pay for: ${paymentInfo.parcelName}`,
               },
             },
             quantity: 1,
           },
         ],
-        customer_email: paymentInfo.senderEmail,
+
         mode: "payment",
         metadata: {
           parcelId: paymentInfo.parcelId,
         },
-        success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success`,
+
+        customer_email: paymentInfo.senderEmail,
+        success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
       });
 
       console.log(session);
       res.send({ url: session.url });
+    });
+
+    app.patch("/payment-success", async (req, res) => {
+      const sessionId = req.query.session_id;
+
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      console.log("session retrieve", session);
+
+      if (session.payment_status === "paid") {
+        const id = session.metadata.parcelId;
+        const query = { _id: new ObjectId(id) };
+        const update = {
+          $set: {
+            paymentStatus: "paid",
+          },
+        };
+
+        const result = await parcelsCollection.updateOne(query, update);
+        res.send(result);
+      }
+
+      res.send({ success: false });
     });
 
     // Send a ping to confirm a successful connection
