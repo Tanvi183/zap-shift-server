@@ -116,51 +116,101 @@ async function run() {
     });
 
     app.patch("/payment-success", async (req, res) => {
-      const sessionId = req.query.session_id;
+      try {
+        const sessionId = req.query.session_id;
 
-      if (!sessionId)
-        return res.send({ success: false, message: "No session ID" });
+        // Session id is avaiable or not
+        if (!sessionId) {
+          return res.send({ success: false, message: "No session ID" });
+        }
 
-      const session = await stripe.checkout.sessions.retrieve(sessionId);
-      const trackingId = generateTrackingId();
-      // console.log("session retrieve", session);
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+        // console.log("session retrieve", session);
+        const transactionId = session.payment_intent;
 
-      if (session.payment_status === "paid") {
-        const id = session.metadata.parcelId;
-        const query = { _id: new ObjectId(id) };
-        const update = {
-          $set: {
-            paymentStatus: "paid",
-            trackingId: trackingId,
-          },
-        };
+        if (!session || !transactionId) {
+          return res.send({ success: false, message: "Invalid session" });
+        }
 
-        const result = await parcelsCollection.updateOne(query, update);
+        // Check if payment already exists
+        const existingPayment = await paymentCollection.findOne({
+          transactionId,
+          //This feature called object property shorthand.
+          // When the key name and variable name are the same,
+        });
+        // console.log(existingPayment);
 
-        const payment = {
-          amount: session.amount_total / 100,
-          currency: session.currency,
-          customerEmail: session.customer_email,
-          parcelId: id,
-          parcelName: session.metadata.parcelName,
-          transactionId: session.payment_intent,
-          paymentStatus: session.payment_status,
-          paidAt: new Date(),
-        };
-
-        if (session.payment_status === "paid") {
-          const resultPayment = await paymentCollection.insertOne(payment);
-          res.send({
+        if (existingPayment) {
+          return res.send({
             success: true,
-            modifyParcel: result,
-            trackingId: trackingId,
-            transactionId: session.payment_intent,
-            paymentInfo: resultPayment,
+            message: "Payment already processed",
+            transactionId,
+            trackingId: existingPayment.trackingId,
           });
         }
-      }
 
-      res.send({ success: false });
+        // Ensure metadata exists
+        if (!session.metadata || !session.metadata.parcelId) {
+          return res.send({
+            success: false,
+            message: "Missing metadata in Stripe session",
+          });
+        }
+
+        const trackingId = generateTrackingId();
+
+        // Only handle paid sessions
+        if (session.payment_status !== "paid") {
+          return res.send({
+            success: false,
+            message: "Payment is not marked as paid",
+          });
+        }
+
+        const parcelId = session.metadata.parcelId;
+
+        // Update parcel as paid
+        const parcelUpdate = await parcelsCollection.updateOne(
+          { _id: new ObjectId(parcelId) },
+          {
+            $set: {
+              paymentStatus: "paid",
+              trackingId,
+            },
+          }
+        );
+
+        // Create payment record
+        const paymentData = {
+          amount: Number(session.amount_total) / 100,
+          currency: session.currency,
+          customerEmail: session.customer_email,
+          parcelId,
+          parcelName: session.metadata.parcelName,
+          transactionId,
+          paymentStatus: session.payment_status,
+          paidAt: new Date(),
+          trackingId,
+        };
+
+        const paymentInserted = await paymentCollection.insertOne(paymentData);
+
+        return res.send({
+          success: true,
+          message: "Payment processed successfully",
+          trackingId,
+          transactionId,
+          modifyParcel: parcelUpdate,
+          paymentInfo: paymentInserted,
+        });
+      } catch (error) {
+        console.error("Payment success error:", error);
+        return res.status(500).send({
+          success: false,
+          message: "Server error",
+          error: error.message,
+        });
+      }
     });
 
     // Send a ping to confirm a successful connection
