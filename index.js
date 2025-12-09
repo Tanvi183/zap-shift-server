@@ -213,6 +213,23 @@ async function run() {
       }
     });
 
+    app.get("/payments", async (req, res) => {
+      const email = req.query.email;
+      const query = {};
+
+      if (email) {
+        query.customerEmail = email;
+
+        // check email address
+        // if (email !== req.decoded_email) {
+        //   return res.status(403).send({ message: "forbidden access" });
+        // }
+      }
+      const cursor = paymentCollection.find(query).sort({ paidAt: -1 });
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
