@@ -121,6 +121,30 @@ async function run() {
       }
     );
 
+    // user's searching but not working later i will fixed. videio name : Search User using partial regex
+    app.get("/users", verifyFBToken, async (req, res) => {
+      const searchText = req.query.searchText || "";
+
+      const query = {};
+
+      if (searchText.trim() !== "") {
+        query = {
+          $or: [
+            { displayName: { $regex: searchText, $options: "i" } },
+            { email: { $regex: searchText, $options: "i" } },
+          ],
+        };
+      }
+
+      const users = await userCollection
+        .find(query)
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .toArray();
+
+      res.send(users);
+    });
+
     // role wise users
     app.get("/users/:email/role", async (req, res) => {
       const email = req.params.email;
@@ -132,10 +156,15 @@ async function run() {
     // parcel related api
     app.get("/parcels", async (req, res) => {
       const query = {};
-      const { email } = req.query;
+      const { email, deliveryStatus } = req.query;
+
       // /parcels?email=''&
       if (email) {
         query.senderEmail = email;
+      }
+
+      if (deliveryStatus) {
+        query.deliveryStatus = deliveryStatus;
       }
 
       const options = { sort: { createdAt: -1 } };
@@ -160,6 +189,37 @@ async function run() {
 
       const result = await parcelsCollection.insertOne(parcel);
       res.send(result);
+    });
+
+    app.patch("/parcels/:id", async (req, res) => {
+      const { riderId, riderName, riderEmail } = req.body;
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+
+      const updatedDoc = {
+        $set: {
+          deliveryStatus: "driver_assigned",
+          riderId: riderId,
+          riderName: riderName,
+          riderEmail: riderEmail,
+        },
+      };
+
+      const result = await parcelsCollection.updateOne(query, updatedDoc);
+
+      // update rider information
+      const riderQuery = { _id: new ObjectId(riderId) };
+      const riderUpdatedDoc = {
+        $set: {
+          workStatus: "in_delivery",
+        },
+      };
+      const riderResult = await ridersCollection.updateOne(
+        riderQuery,
+        riderUpdatedDoc
+      );
+
+      res.send(riderResult);
     });
 
     app.delete("/parcels/:id", async (req, res) => {
@@ -213,9 +273,10 @@ async function run() {
           return res.send({ success: false, message: "No session ID" });
         }
 
+        // Retrieve Stripe session
         const session = await stripe.checkout.sessions.retrieve(sessionId);
         // console.log("session retrieve", session);
-        const transactionId = session.payment_intent;
+        const transactionId = session?.payment_intent;
 
         if (!session || !transactionId) {
           return res.send({ success: false, message: "Invalid session" });
@@ -264,6 +325,7 @@ async function run() {
           {
             $set: {
               paymentStatus: "paid",
+              deliveryStatus: "pending-pickup",
               trackingId,
             },
           }
@@ -323,10 +385,19 @@ async function run() {
 
     // riders related apis
     app.get("/riders", async (req, res) => {
+      const { status, district, workStatus } = req.query;
       const query = {};
-      if (req.query.status) {
-        query.status = req.query.status;
+
+      if (status) {
+        query.status = status;
       }
+      if (district) {
+        query.district = district;
+      }
+      if (workStatus) {
+        query.workStatus = workStatus;
+      }
+
       const cursor = ridersCollection.find(query);
       const result = await cursor.toArray();
       res.send(result);
@@ -348,6 +419,7 @@ async function run() {
       const updatedDoc = {
         $set: {
           status: status,
+          workStatus: "available",
         },
       };
 
