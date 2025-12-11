@@ -183,11 +183,24 @@ async function run() {
         query.riderEmail = riderEmail;
       }
       if (deliveryStatus) {
-        query.deliveryStatus = deliveryStatus;
+        query.deliveryStatus = { $in: ["driver_assigned", "rider_arriving"] };
       }
 
       const cursor = parcelsCollection.find(query);
       const result = await cursor.toArray();
+      res.send(result);
+    });
+
+    // parcle status accept and reject
+    app.patch("/parcels/:id/status", async (req, res) => {
+      const { deliveryStatus } = req.body;
+      const query = { _id: new ObjectId(req.params.id) };
+      const updatedDoc = {
+        $set: {
+          deliveryStatus: deliveryStatus,
+        },
+      };
+      const result = await parcelsCollection.updateOne(query, updatedDoc);
       res.send(result);
     });
 
