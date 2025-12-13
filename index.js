@@ -66,6 +66,7 @@ async function run() {
     const parcelsCollection = db.collection("parcels");
     const paymentCollection = db.collection("payments");
     const ridersCollection = db.collection("riders");
+    const trackingsCollection = db.collection("trackings");
 
     // middle admin before allowing admin activity
     // must be used after verifyFBToken middleware
@@ -79,6 +80,30 @@ async function run() {
       }
 
       next();
+    };
+
+    const verifyRider = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await userCollection.findOne(query);
+
+      if (!user || user.role !== "rider") {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+
+      next();
+    };
+
+    // tracking logged
+    const logTracking = async (trackingId, status) => {
+      const log = {
+        trackingId,
+        status,
+        details: status.split("_").join(" "),
+        createdAt: new Date(),
+      };
+      const result = await trackingsCollection.insertOne(log);
+      return result;
     };
 
     // users related apis
@@ -194,7 +219,7 @@ async function run() {
 
     // parcle status accept and reject
     app.patch("/parcels/:id/status", async (req, res) => {
-      const { deliveryStatus, riderId } = req.body;
+      const { deliveryStatus, riderId, trackingId } = req.body;
 
       const query = { _id: new ObjectId(req.params.id) };
       const updatedDoc = {
@@ -218,6 +243,10 @@ async function run() {
       }
 
       const result = await parcelsCollection.updateOne(query, updatedDoc);
+
+      // log tracking
+      logTracking(trackingId, deliveryStatus);
+
       res.send(result);
     });
 
@@ -239,7 +268,7 @@ async function run() {
     });
 
     app.patch("/parcels/:id", async (req, res) => {
-      const { riderId, riderName, riderEmail } = req.body;
+      const { riderId, riderName, riderEmail, trackingId } = req.body;
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
 
@@ -266,6 +295,9 @@ async function run() {
         riderUpdatedDoc
       );
 
+      // log  tracking
+      logTracking(trackingId, "driver_assigned");
+
       res.send(riderResult);
     });
 
@@ -274,6 +306,14 @@ async function run() {
       const query = { _id: new ObjectId(id) };
 
       const result = await parcelsCollection.deleteOne(query);
+      res.send(result);
+    });
+
+    // tracking related apis
+    app.get("/trackings/:trackingId/logs", async (req, res) => {
+      const trackingId = req.params.trackingId;
+      const query = { trackingId };
+      const result = await trackingsCollection.find(query).toArray();
       res.send(result);
     });
 
@@ -392,6 +432,8 @@ async function run() {
         };
 
         const paymentInserted = await paymentCollection.insertOne(paymentData);
+
+        logTracking(trackingId, "parcel_paid");
 
         return res.send({
           success: true,
